@@ -115,7 +115,7 @@
   function addMsg(m) {
     const log = document.getElementById("log");
     const d = document.createElement("div"); d.className = "m"; d.id = "m-" + m.id;
-    const n = document.createElement("span"); n.className = "n"; n.textContent = m.name;
+    const n = document.createElement("span"); n.className = "n"; n.textContent = "名無し" + m.no;
     const t = document.createElement("span"); t.textContent = m.text;
     d.append(n, t);
     d.onclick = (e) => { e.stopPropagation(); if (confirm("削除: " + m.text)) socket.emit("deleteMessage", m.id); };

@@ -2,15 +2,12 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title></title>
 <style>
   * { box-sizing:border-box; }
-  html, body { margin:0; height:100%; background:#000; color:#eee; font-family:-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif; }
-  #setup { padding:24px 20px; line-height:1.8; }
-  .os { display:none; }
-  #start { margin-top:20px; padding:12px 28px; font-size:17px; border:1px solid #eee; background:none; color:#eee; }
-  #chat { display:none; height:100%; flex-direction:column; }
+  html, body { margin:0; height:100%; overflow:hidden; overscroll-behavior:none; background:#000; color:#eee; font-family:-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif; }
+  #chat { display:flex; position:fixed; top:0; left:0; right:0; height:100%; flex-direction:column; }
   #log { flex:1; overflow-y:auto; padding:8px 12px; }
   .m { margin:4px 0; word-break:break-all; }
   .m .n { color:#777; font-size:12px; margin-right:6px; }
@@ -19,13 +16,6 @@
 </style>
 </head>
 <body>
-
-<div id="setup">
-  <p class="os" data-os="ios">消音モードをオフ<br>設定 → サウンドと触覚 → キーボードのフィードバック → サウンドをオン</p>
-  <p class="os" data-os="android">マナーモードをオフ<br>Gboardの設定 → 設定 → キー操作音をオン</p>
-  <p class="os" data-os="other">マナーモードをオフ<br>キーボードの入力音をオン</p>
-  <button id="start">参加</button>
-</div>
 
 <div id="chat">
   <div id="log"></div>
@@ -39,7 +29,6 @@
   const ua = navigator.userAgent;
   const os = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
     ? "ios" : /Android/.test(ua) ? "android" : "other";
-  document.querySelector(`.os[data-os="${os}"]`).style.display = "block";
 
   const socket = io();
   const log = document.getElementById("log");
@@ -48,7 +37,7 @@
   function addMsg(m) {
     const d = document.createElement("div");
     d.className = "m"; d.id = "m-" + m.id;
-    const n = document.createElement("span"); n.className = "n"; n.textContent = m.name;
+    const n = document.createElement("span"); n.className = "n"; n.textContent = "名無し" + m.no;
     const t = document.createElement("span"); t.textContent = m.text;
     d.append(n, t);
     const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 60;
@@ -65,11 +54,21 @@
   socket.on("msg", addMsg);
   socket.on("deleted", (id) => { const el = document.getElementById("m-" + id); if (el) el.remove(); });
 
-  document.getElementById("start").onclick = () => {
-    document.getElementById("setup").style.display = "none";
-    document.getElementById("chat").style.display = "flex";
-    input.focus();
-  };
+  // キーボードが出たら、見えている範囲にチャット全体を収める
+  const chat = document.getElementById("chat");
+  function fit() {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    chat.style.height = vv.height + "px";
+    chat.style.transform = "translateY(" + vv.offsetTop + "px)";
+    log.scrollTop = log.scrollHeight;
+  }
+  if (window.visualViewport) {
+    visualViewport.addEventListener("resize", fit);
+    visualViewport.addEventListener("scroll", fit);
+    fit();
+  }
+  input.addEventListener("focus", () => setTimeout(fit, 300));
 
   let prevLen = 0;
   input.addEventListener("input", (e) => {
