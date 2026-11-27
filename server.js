@@ -7,24 +7,16 @@ const { Server } = require("socket.io");
 const PORT = process.env.PORT || 3000;
 const STAGE_KEY = process.env.STAGE_KEY || "stage"; // 会場PC用の合言葉（本番では必ず変える）
 
-// NGワード（必要に応じて追加）
-const NG_WORDS = ["死ね", "殺す", "しね", "ころす", "きえろ", "消えろ"];
-
 const app = express();
 app.use(express.static(__dirname + "/public"));
 const server = http.createServer(app);
 const io = new Server(server);
 
 let nextId = 1;
+let postNo = 0; // レス番号
 const messages = []; // 直近のメッセージ
 const online = new Map(); // id -> {id,name,os}
 const MAX_MESSAGES = 200;
-
-function maskNG(text) {
-  let t = text;
-  for (const w of NG_WORDS) t = t.split(w).join("●".repeat(w.length));
-  return t;
-}
 
 io.on("connection", (socket) => {
   const isStage = socket.handshake.auth && socket.handshake.auth.key === STAGE_KEY;
@@ -76,7 +68,7 @@ io.on("connection", (socket) => {
     user.lastMsg = now;
     text = String(text || "").trim().slice(0, 140);
     if (!text) return;
-    const m = { id: now + "-" + user.id, uid: user.id, name: user.name, os: user.os, text: maskNG(text), at: now };
+    const m = { id: now + "-" + user.id, no: ++postNo, uid: user.id, name: "名無し", os: user.os, text, at: now };
     messages.push(m);
     if (messages.length > MAX_MESSAGES) messages.shift();
     io.emit("msg", m);
