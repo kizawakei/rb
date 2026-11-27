@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title></title>
+<style>
+  html, body { margin:0; height:100%; background:#000; color:#eee; font-family:-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif; overflow:hidden; cursor:default; }
+  #screen { height:100%; padding:30px 40px; box-sizing:border-box; display:flex; flex-direction:column; }
+  #log { flex:1; overflow:hidden; display:flex; flex-direction:column; justify-content:flex-end; }
+  .m { font-size:26px; line-height:1.45; margin:4px 0; word-break:break-all; }
+  .m .n { color:#666; font-size:16px; margin-right:10px; }
+</style>
+</head>
+<body>
+<div id="screen">
+  <div id="log"></div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+  // 操作: 最初にクリックで開始 / ↑↓: 音量 / F: 全画面 / 投稿をクリック: 削除
+  const key = new URLSearchParams(location.search).get("key") || "";
+  let ctx, master, noiseBuf, socket;
+  const samples = {};
+  const pans = new Map();
+
+  // 合成音のパラメータ（f: 中心周波数, q: 鋭さ, d: 長さ秒, g: 音量, tone: 純音の周波数）
+  const VOICES = {
+    ios: {
+      char:   { f:3800, q:2.5, d:0.022, g:0.9, tone:2100 },
+      delete: { f:2500, q:2.0, d:0.032, g:0.9, tone:1300 },
+      enter:  { f:1600, q:1.6, d:0.045, g:1.0, tone:900 },
+    },
+    android: {
+      char:   { f:1500, q:1.2, d:0.030, g:0.9, tone:520 },
+      delete: { f:1100, q:1.2, d:0.036, g:0.9, tone:420 },
+      enter:  { f:800,  q:1.0, d:0.050, g:1.0, tone:330 },
+    },
+    other: {
+      char:   { f:2400, q:1.8, d:0.026, g:0.85, tone:1000 },
+      delete: { f:1700, q:1.6, d:0.034, g:0.85, tone:700 },
+      enter:  { f:1100, q:1.3, d:0.048, g:0.95, tone:500 },
+    },
+  };
+
+  async function loadSamples() {
+    for (const os of ["ios", "android", "other"]) for (const t of ["char", "delete", "enter"]) {
+      for (const ext of ["wav", "mp3"]) {
+        try {
+          const r = await fetch(`/sounds/${os}-${t}.${ext}`);
+          if (!r.ok) continue;
+          samples[`${os}-${t}`] = await ctx.decodeAudioData(await r.arrayBuffer());
+          break;
+        } catch (e) {}
+      }
+    }
+  }
+
+  function panOf(id) {
+    if (!pans.has(id)) pans.set(id, (Math.random() * 2 - 1) * 0.8);
+    return pans.get(id);
+  }
+
+  function play(os, type, pan) {
+    const now = ctx.currentTime;
+    const p = ctx.createStereoPanner(); p.pan.value = pan; p.connect(master);
+    const detune = 1 + (Math.random() - 0.5) * 0.16;
+    const s = samples[`${os}-${type}`];
+    if (s) {
+      const src = ctx.createBufferSource();
+      src.buffer = s; src.playbackRate.value = detune;
+      src.connect(p); src.start(now);
+      return;
+    }
+    const v = VOICES[os][type];
+    const n = ctx.createBufferSource(); n.buffer = noiseBuf;
+    const bp = ctx.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = v.f * detune; bp.Q.value = v.q;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, now);
+    g.gain.linearRampToValueAtTime(v.g, now + 0.001);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + v.d);
+    n.connect(bp).connect(g).connect(p);
+    n.start(now, Math.random() * 0.5); n.stop(now + v.d + 0.01);
+    const o = ctx.createOscillator(); o.frequency.value = v.tone * detune;
+    const og = ctx.createGain();
+    og.gain.setValueAtTime(v.g * 0.35, now);
+    og.gain.exponentialRampToValueAtTime(0.0001, now + v.d * 0.8);
+    o.connect(og).connect(p);
+    o.start(now); o.stop(now + v.d);
+  }
+
+  async function start() {
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    await ctx.resume();
+    master = ctx.createGain(); master.gain.value = 0.9;
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -12; comp.ratio.value = 6;
+    master.connect(comp).connect(ctx.destination);
+    noiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    await loadSamples();
+
+    socket = io({ auth: { key } });
+    socket.on("init", (d) => {
+      if (d.name) { document.getElementById("log").textContent = "key が違います"; socket.disconnect(); return; }
+      document.getElementById("log").innerHTML = "";
+      d.messages.forEach(addMsg);
+    });
+    socket.on("k", (e) => play(e.os, e.t, panOf(e.id)));
+    socket.on("msg", addMsg);
+    socket.on("deleted", (id) => { const el = document.getElementById("m-" + id); if (el) el.remove(); });
+  }
+
+  function addMsg(m) {
+    const log = document.getElementById("log");
+    const d = document.createElement("div"); d.className = "m"; d.id = "m-" + m.id;
+    const n = document.createElement("span"); n.className = "n"; n.textContent = m.name;
+    const t = document.createElement("span"); t.textContent = m.text;
+    d.append(n, t);
+    d.onclick = (e) => { e.stopPropagation(); if (confirm("削除: " + m.text)) socket.emit("deleteMessage", m.id); };
+    log.appendChild(d);
+    while (log.children.length > 40) log.firstChild.remove();
+  }
+
+  document.addEventListener("click", () => { if (!ctx) start(); });
+  document.addEventListener("keydown", (e) => {
+    if (!ctx) return;
+    if (e.key === "ArrowUp") master.gain.value = Math.min(2, master.gain.value + 0.1);
+    if (e.key === "ArrowDown") master.gain.value = Math.max(0, master.gain.value - 0.1);
+    if (e.key === "f" || e.key === "F") document.documentElement.requestFullscreen().catch(() => {});
+  });
+</script>
+</body>
+</html>
